@@ -96,7 +96,7 @@ frontend/.env
 env
 Copy
 Edit
-VITE_WS_URL=ws://localhost:8000/ws
+VITE_WS_URL=http://localhost:8000/ws
 No secrets needed for local development.
 
 💡 Future Improvements

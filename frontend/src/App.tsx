@@ -1,9 +1,10 @@
 import { useRef, useEffect, useState } from "react";
 
-const socket = new WebSocket("ws://localhost:8000/ws");
+const socket = new WebSocket(import.meta.env.VITE_WS_URL);
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
   const [isDrawing, setIsDrawing] = useState(false);
   const [name, setName] = useState("");
   const [role, setRole] = useState<"drawer" | "guesser">("guesser");
@@ -16,38 +17,81 @@ export default function App() {
   const [showWinModal, setShowWinModal] = useState(false);
   const [winnerName, setWinnerName] = useState("");
 
-  useEffect(() => {
+  const connectWebSocket = () => {
+    console.log("connecting to", import.meta.env.VITE_WS_URL);
+
+    socket.onopen = () => {
+      console.log("✅ Connected to WebSocket");
+    };
+
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === "draw") {
-        const ctx = canvasRef.current?.getContext("2d");
-        if (!ctx) return;
-        ctx.lineTo(data.x, data.y);
-        ctx.stroke();
-      } else if (data.type === "chat") {
-        setChatMessages((prev) => [...prev, data.message]);
-      } else if (data.type === "role") {
-        setIsDrawer(data.is_drawer);
-        if (data.is_drawer) setWordToDraw(data.word);
-      } else if (data.type === "win") {
-        setWinnerName(data.name);
-        setShowWinModal(true);
-      } else if (data.type === "error") {
-        setError(data.message);
-        setConnected(false);
-      } else if (data.type === "reset") {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext("2d");
+      switch (data.type) {
+        case "draw": {
+          const ctx = canvasRef.current?.getContext("2d");
           if (ctx) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.lineTo(data.x, data.y);
+            ctx.stroke();
           }
+          break;
         }
-        setChatMessages([]);
-        setShowWinModal(false);
+        case "chat":
+          console.log("chat", data.message);
+          setChatMessages((prev) => [...prev, data.message]);
+          break;
+        case "role":
+          setIsDrawer(data.is_drawer);
+          if (data.is_drawer) setWordToDraw(data.word);
+          break;
+        case "win":
+          setWinnerName(data.name);
+          setShowWinModal(true);
+          break;
+        case "reset": {
+          const canvas = canvasRef.current;
+          if (canvas) {
+            const ctx = canvas.getContext("2d");
+            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+          onResetGame();
+          break;
+        }
+        case "error":
+          setError(data.message);
+          setConnected(false);
+          break;
+        default:
+          console.warn("Unhandled message:", data);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.error("WebSocket error:", err);
+      socket.close();
+    };
+
+    socket.onclose = () => {
+      console.warn("WebSocket closed. Reconnecting in 2s...!!!");
+      setTimeout(connectWebSocket, 2000);
+    };
+  };
+
+  useEffect(() => {
+    connectWebSocket();
+    return () => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        console.log("closing socket");
+
+        socket.close();
       }
     };
   }, []);
+
+  const onResetGame = () => {
+    setChatMessages([]);
+    setWinnerName("");
+    setShowWinModal(false);
+  };
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!isDrawer) return;
@@ -64,10 +108,10 @@ export default function App() {
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isDrawer || !isDrawing) return;
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
+    const ctx = canvas?.getContext("2d");
+    const rect = canvas?.getBoundingClientRect();
+    if (!canvas || !ctx || !rect) return;
+
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     ctx.lineTo(x, y);
@@ -78,12 +122,15 @@ export default function App() {
   const handleMouseUp = () => setIsDrawing(false);
 
   const handleJoin = () => {
+    if (!socket) return;
     socket.send(JSON.stringify({ type: "join", name, role }));
     setConnected(true);
   };
 
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!socket) return;
+    console.log("sending chat message");
     socket.send(
       JSON.stringify({ type: "chat", message: `${name}: ${inputMessage}` })
     );
@@ -94,15 +141,6 @@ export default function App() {
   };
 
   const handleCloseModal = () => {
-    // setShowWinModal(false);
-    // setChatMessages([]);
-    // const canvas = canvasRef.current;
-    // if (canvas) {
-    //   const ctx = canvas.getContext("2d");
-    //   if (ctx) {
-    //     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    //   }
-    // }
     socket.send(JSON.stringify({ type: "new_round" }));
     setShowWinModal(false);
   };
@@ -115,14 +153,12 @@ export default function App() {
             <h2 className="text-2xl font-bold text-gray-800">
               Join Pictionary
             </h2>
-
             <input
               className="w-full border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Enter your name"
             />
-
             <div className="flex justify-center space-x-6">
               <label className="flex items-center space-x-2 text-gray-700">
                 <input
@@ -143,14 +179,12 @@ export default function App() {
                 <span>Guesser</span>
               </label>
             </div>
-
             <button
               onClick={handleJoin}
               className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 rounded transition"
             >
               Join Game
             </button>
-
             {error && <p className="text-red-600 text-sm">{error}</p>}
           </div>
         </div>
