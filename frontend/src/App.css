@@ -1,0 +1,50 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+import random
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+clients = []
+player_names = {}
+drawer_id = None
+WORDS = ["apple", "house", "car", "tree", "pizza"]
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    clients.append(websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if data["type"] == "join":
+                player_names[websocket] = data["name"]
+                if len(clients) == 1:
+                    global drawer_id
+                    drawer_id = websocket
+                    word = random.choice(WORDS)
+                    await websocket.send_json({"type": "role", "is_drawer": True, "word": word})
+                else:
+                    await websocket.send_json({"type": "role", "is_drawer": False})
+            elif data["type"] == "draw":
+                for client in clients:
+                    if client != websocket:
+                        await client.send_json({"type": "draw", "x": data["x"], "y": data["y"]})
+            elif data["type"] == "chat":
+                for client in clients:
+                    await client.send_json({"type": "chat", "message": data["message"]})
+    except WebSocketDisconnect:
+        clients.remove(websocket)
+        if websocket in player_names:
+            del player_names[websocket]
+        if websocket == drawer_id and clients:
+            drawer_id = clients[0]
+            word = random.choice(WORDS)
+            await drawer_id.send_json({"type": "role", "is_drawer": True, "word": word})
