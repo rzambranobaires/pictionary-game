@@ -1,7 +1,8 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from collections import deque
+from collections import defaultdict
 import random
+import uuid
 
 app = FastAPI()
 
@@ -13,50 +14,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-clients = deque()
-player_names = {}
-drawer_id = None
-current_word = None
+# Global game data
+ROOMS: dict[str, dict] = defaultdict(lambda: {
+    "clients": {},  # session_id -> WebSocket
+    "names": {},    # session_id -> name
+    "roles": {},    # session_id -> role
+    "drawer_id": None,
+    "current_word": None
+})
+
 WORDS = ["apple", "house", "car", "tree", "pizza"]
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    global drawer_id, current_word
-
+@app.websocket("/ws/{room_id}")
+async def websocket_endpoint(websocket: WebSocket, room_id: str):
     await websocket.accept()
-    clients.append(websocket)
+
+    session_id = str(uuid.uuid4())  # fallback session_id
     try:
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
             if msg_type == "join":
-                role = data.get("role")
-                player_names[websocket] = data["name"]
+                session_id = data["session_id"]
+                name = data["name"]
+                role = data["role"]
+                room = ROOMS[room_id]
+
+                # Save client data
+                room["clients"][session_id] = websocket
+                room["names"][session_id] = name
+                room["roles"][session_id] = role
 
                 if role == "drawer":
-                    if drawer_id is None:
-                        drawer_id = websocket
-                        current_word = random.choice(WORDS)
+                    if room["drawer_id"] is None:
+                        room["drawer_id"] = session_id
+                        room["current_word"] = random.choice(WORDS)
                         await websocket.send_json({
                             "type": "role",
                             "is_drawer": True,
-                            "word": current_word
+                            "word": room["current_word"]
                         })
                     else:
                         await websocket.send_json({
                             "type": "error",
-                            "message": "Drawer already assigned. Please join as a guesser."
+                            "message": "Drawer already assigned. Join as guesser."
                         })
-                        continue
                 else:
-                    await websocket.send_json({
-                        "type": "role",
-                        "is_drawer": False
-                    })
+                    await websocket.send_json({"type": "role", "is_drawer": False})
 
             elif msg_type == "draw":
-                for client in clients:
+                for sid, client in ROOMS[room_id]["clients"].items():
                     if client != websocket:
                         await client.send_json({
                             "type": "draw",
@@ -65,7 +73,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         })
 
             elif msg_type == "chat":
-                for client in clients:
+                for client in ROOMS[room_id]["clients"].values():
                     await client.send_json({
                         "type": "chat",
                         "message": data["message"]
@@ -73,60 +81,62 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif msg_type == "guess":
                 guess = data.get("guess", "").strip().lower()
-                if current_word and guess == current_word:
-                    # Notify all users of the winner
-                    for client in clients:
+                room = ROOMS[room_id]
+                if room["current_word"] and guess == room["current_word"]:
+                    winner_name = data["name"]
+                    for client in room["clients"].values():
+                        await client.send_json({"type": "win", "name": winner_name})
+
+                    # Rotate drawer
+                    all_ids = list(room["clients"].keys())
+                    if room["drawer_id"] in all_ids:
+                        current_index = all_ids.index(room["drawer_id"])
+                        next_index = (current_index + 1) % len(all_ids)
+                        room["drawer_id"] = all_ids[next_index]
+                        room["current_word"] = random.choice(WORDS)
+
+                        for sid, client in room["clients"].items():
+                            is_drawer = sid == room["drawer_id"]
+                            await client.send_json({
+                                "type": "role",
+                                "is_drawer": is_drawer,
+                                "word": room["current_word"] if is_drawer else None
+                            })
+
+            elif msg_type == "new_round":
+                room = ROOMS[room_id]
+                all_ids = list(room["clients"].keys())
+                if room["drawer_id"] in all_ids:
+                    current_index = all_ids.index(room["drawer_id"])
+                    next_index = (current_index + 1) % len(all_ids)
+                    room["drawer_id"] = all_ids[next_index]
+                    room["current_word"] = random.choice(WORDS)
+
+                    # 🔄 Notify reset first so clients prepare for new round
+                    for client in room["clients"].values():
+                        await client.send_json({"type": "reset"})
+
+                    # 🎭 Then update roles and notify each client
+                    for sid, client in room["clients"].items():
+                        is_drawer = sid == room["drawer_id"]
+                        room["roles"][sid] = "drawer" if is_drawer else "guesser"
                         await client.send_json({
-                            "type": "win",
-                            "name": data["name"]
+                            "type": "role",
+                            "is_drawer": is_drawer,
+                            "word": room["current_word"] if is_drawer else None
                         })
 
-                    # Rotate the drawer role
-                    if clients:
-                        clients.rotate(-1)
-                        drawer_id = clients[0]
-                        current_word = random.choice(WORDS)
-
-                        for client in clients:
-                            if client == drawer_id:
-                                await client.send_json({
-                                    "type": "role",
-                                    "is_drawer": True,
-                                    "word": current_word
-                                })
-                            else:
-                                await client.send_json({
-                                    "type": "role",
-                                    "is_drawer": False
-                                })
-            elif msg_type == "new_round":
-                if clients:
-                    clients.rotate(-1)
-                    drawer_id = clients[0]
-                    current_word = random.choice(WORDS)
-
-                    for client in clients:
-                        if client == drawer_id:
-                            await client.send_json({
-                                "type": "role",
-                                "is_drawer": True,
-                                "word": current_word
-                            })
-                        else:
-                            await client.send_json({
-                                "type": "role",
-                                "is_drawer": False
-                            })
 
                     # Notify all to clear canvas and chat
-                    for client in clients:
-                        await client.send_json({
-                            "type": "reset"
-                        })
+                    for client in room["clients"].values():
+                        await client.send_json({"type": "reset"})
+
     except WebSocketDisconnect:
-        clients.remove(websocket)
-        if websocket in player_names:
-            del player_names[websocket]
-        if websocket == drawer_id:
-            drawer_id = None
-            current_word = None
+        room = ROOMS[room_id]
+        if session_id in room["clients"]:
+            del room["clients"][session_id]
+            del room["names"][session_id]
+            del room["roles"][session_id]
+            if room["drawer_id"] == session_id:
+                room["drawer_id"] = None
+                room["current_word"] = None
