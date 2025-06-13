@@ -25,16 +25,18 @@ A real-time multiplayer Pictionary game built with:
 
 #### 1. Clone the Repo
 
-```bash
+```
 git clone https://github.com/your-username/pictionary-app.git
 cd pictionary-app
-2. Setup Backend (FastAPI)
-bash
+```
+### 2. Setup Backend (FastAPI)
+```bash
 Copy
 Edit
 cd backend
 python3 -m venv venv
 source venv/bin/activate
+```
 
 # Install backend dependencies
 pip install -r requirements.txt
@@ -43,23 +45,25 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 Backend will run on: http://localhost:8000
 
-3. Setup Frontend (React + Tailwind)
-bash
+### 3. Setup Frontend (React + Tailwind)
+```bash
 Copy
 Edit
 cd ../frontend
+```
 
 # Install frontend dependencies
 yarn install  # or npm install
 
 # Start the dev server
 yarn dev
+
 Frontend will run on: http://localhost:5173
 
-🕹️ How to Play
+## 🕹️ How to Play
 Open the app in 2+ browser tabs or devices.
 
-Each player:
+### Each player:
 
 Enters their name
 
@@ -88,9 +92,9 @@ Modal UI for round transitions
 
 Role-based input visibility
 
-🔐 Environment Variables
+### 🔐 Environment Variables
 Create a .env file if needed:
-
+```
 frontend/.env
 
 env
@@ -98,12 +102,10 @@ Copy
 Edit
 VITE_WS_URL=http://localhost:8000/ws
 No secrets needed for local development.
+``` 
 
-💡 Future Improvements
-Scoreboard and player stats
-
-Timed rounds
-
-Word difficulty settings
-
-Authenticated multiplayer lobby
+## 💡 Future Improvements
+ - Scoreboard and player stats
+ - Timed rounds
+ - Word difficulty settings
+ - Authenticated multiplayer lobby
